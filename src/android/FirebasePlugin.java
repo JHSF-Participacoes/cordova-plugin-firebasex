@@ -21,7 +21,7 @@ import androidx.core.app.NotificationManagerCompat;
 import android.util.Base64;
 import android.util.Log;
 
-import com.google.firebase.crashlytics.FirebaseCrashlytics;
+import com.crashlytics.android.Crashlytics;
 
 import com.google.android.gms.auth.api.Auth;
 import com.google.android.gms.auth.api.signin.GoogleSignIn;
@@ -62,6 +62,7 @@ import com.google.firebase.remoteconfig.FirebaseRemoteConfigValue;
 import com.google.firebase.perf.FirebasePerformance;
 import com.google.firebase.perf.metrics.Trace;
 
+import io.fabric.sdk.android.Fabric;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaInterface;
@@ -98,7 +99,6 @@ public class FirebasePlugin extends CordovaPlugin {
 
     protected static FirebasePlugin instance = null;
     private FirebaseAnalytics mFirebaseAnalytics;
-    private FirebaseCrashlytics firebaseCrashlytics;
     private FirebaseFirestore firestore;
     private Gson gson;
     private FirebaseAuth.AuthStateListener authStateListener;
@@ -106,6 +106,7 @@ public class FirebasePlugin extends CordovaPlugin {
     private static CordovaInterface cordovaInterface = null;
     protected static Context applicationContext = null;
     private static Activity cordovaActivity = null;
+    private boolean isCrashlyticsEnabled = false;
 
     protected static final String TAG = "FirebasePlugin";
     protected static final String JS_GLOBAL_NAMESPACE = "FirebasePlugin.";
@@ -137,13 +138,18 @@ public class FirebasePlugin extends CordovaPlugin {
         applicationContext = cordovaActivity.getApplicationContext();
         final Bundle extras = cordovaActivity.getIntent().getExtras();
         FirebasePlugin.cordovaInterface = this.cordova;
-        firebaseCrashlytics = FirebaseCrashlytics.getInstance();
         this.cordova.getThreadPool().execute(new Runnable() {
             public void run() {
                 try {
                     Log.d(TAG, "Starting Firebase plugin");
 
-                    if(getMetaDataFromManifest(CRASHLYTICS_COLLECTION_ENABLED)){
+                    if(!getMetaDataFromManifest(CRASHLYTICS_COLLECTION_ENABLED)){
+                        isCrashlyticsEnabled = getPreference(CRASHLYTICS_COLLECTION_ENABLED);
+                        if(isCrashlyticsEnabled){
+                            Fabric.with(applicationContext, new Crashlytics());
+                        }
+                    }else{
+                        isCrashlyticsEnabled = true;
                         setPreference(CRASHLYTICS_COLLECTION_ENABLED, true);
                     }
 
@@ -161,7 +167,7 @@ public class FirebasePlugin extends CordovaPlugin {
                     authStateListener = new AuthStateListener();
                     FirebaseAuth.getInstance().addAuthStateListener(authStateListener);
 
-                    firestore = FirebaseFirestore.getInstance();
+					firestore = FirebaseFirestore.getInstance();
                     gson = new Gson();
 
                     if (extras != null && extras.size() > 1) {
@@ -348,6 +354,9 @@ public class FirebasePlugin extends CordovaPlugin {
             } else if (action.equals("isCrashlyticsCollectionEnabled")) {
                 this.isCrashlyticsCollectionEnabled(callbackContext);
                 return true;
+            } else if (action.equals("isCrashlyticsCollectionCurrentlyEnabled")) {
+                this.isCrashlyticsCollectionCurrentlyEnabled(callbackContext);
+                return true;
             } else if (action.equals("clearAllNotifications")) {
                 this.clearAllNotifications(callbackContext);
                 return true;
@@ -393,12 +402,12 @@ public class FirebasePlugin extends CordovaPlugin {
             } else if (action.equals("grantPermission")
                     || action.equals("setBadgeNumber")
                     || action.equals("getBadgeNumber")
-                    ) {
+            ) {
                 // Stubs for other platform methods
                 callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK, true));
                 return true;
             }else{
-                callbackContext.error("Invalid action: " + action);
+                callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "Invalid action: " + action));
                 return false;
             }
         }catch(Exception e){
@@ -458,7 +467,7 @@ public class FirebasePlugin extends CordovaPlugin {
                     JSONObject returnResults = new JSONObject();
                     returnResults.put("instantVerification", true);
                     returnResults.put("id", id);
-                    FirebasePlugin.activityResultCallbackContext.success(returnResults);
+                    FirebasePlugin.activityResultCallbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK, returnResults));
                     break;
             }
         } catch (Exception e) {
@@ -528,12 +537,12 @@ public class FirebasePlugin extends CordovaPlugin {
                 JSONObject json = new JSONObject();
                 Set<String> keys = bundle.keySet();
                 for (String key : keys) {
-                    try {
-                        json.put(key, bundle.get(key));
-                    } catch (JSONException e) {
-                        handleExceptionWithContext(e, callbackContext);
-                        return;
-                    }
+                  try {
+                      json.put(key, bundle.get(key));
+                  } catch (JSONException e) {
+                      handleExceptionWithContext(e, callbackContext);
+                      return;
+                  }
                 }
 
                 PluginResult pluginresult = new PluginResult(PluginResult.Status.OK, json);
@@ -626,7 +635,8 @@ public class FirebasePlugin extends CordovaPlugin {
         cordova.getThreadPool().execute(new Runnable() {
             public void run() {
                 try {
-                    handleTaskOutcome(FirebaseMessaging.getInstance().subscribeToTopic(topic), callbackContext);
+                    FirebaseMessaging.getInstance().subscribeToTopic(topic);
+                    callbackContext.success();
                 } catch (Exception e) {
                     handleExceptionWithContext(e, callbackContext);
                 }
@@ -638,7 +648,7 @@ public class FirebasePlugin extends CordovaPlugin {
         cordova.getThreadPool().execute(new Runnable() {
             public void run() {
                 try {
-                    handleTaskOutcome(FirebaseMessaging.getInstance().unsubscribeFromTopic(topic), callbackContext);
+                    FirebaseMessaging.getInstance().unsubscribeFromTopic(topic);
                     callbackContext.success();
                 } catch (Exception e) {
                     handleExceptionWithContext(e, callbackContext);
@@ -723,7 +733,7 @@ public class FirebasePlugin extends CordovaPlugin {
         cordova.getThreadPool().execute(new Runnable() {
             public void run() {
                 try {
-                    if(isCrashlyticsEnabled()) {
+                    if(isCrashlyticsEnabled) {
                         // We can optionally be passed a stack trace generated by stacktrace.js.
                         if (args.length() == 2) {
                             JSONArray stackTrace = args.getJSONArray(1);
@@ -761,7 +771,7 @@ public class FirebasePlugin extends CordovaPlugin {
     private void logMessage(final JSONArray data,
                             final CallbackContext callbackContext) {
 
-        if(isCrashlyticsEnabled()){
+        if(isCrashlyticsEnabled){
             String message = data.optString(0);
             logMessageToCrashlytics(message);
             callbackContext.success();
@@ -786,8 +796,8 @@ public class FirebasePlugin extends CordovaPlugin {
         cordovaActivity.runOnUiThread(new Runnable() {
             public void run() {
                 try {
-                    if(isCrashlyticsEnabled()){
-                        firebaseCrashlytics.setUserId(userId);
+                    if(isCrashlyticsEnabled){
+                        Crashlytics.setUserIdentifier(userId);
                         callbackContext.success();
                     }else{
                         callbackContext.error("Cannot set Crashlytics user ID - Crashlytics collection is disabled");
@@ -864,7 +874,17 @@ public class FirebasePlugin extends CordovaPlugin {
         cordova.getThreadPool().execute(new Runnable() {
             public void run() {
                 try {
-                    handleTaskOutcome(task, callbackContext);
+                    task.addOnSuccessListener(new OnSuccessListener<Void>() {
+                        @Override
+                        public void onSuccess(Void data) {
+                            callbackContext.success();
+                        }
+                    }).addOnFailureListener(new OnFailureListener() {
+                        @Override
+                        public void onFailure(Exception e) {
+                            handleExceptionWithContext(e, callbackContext);
+                        }
+                    });
                 } catch (Exception e) {
                     handleExceptionWithContext(e, callbackContext);
                 }
@@ -1001,7 +1021,7 @@ public class FirebasePlugin extends CordovaPlugin {
                 try {
                     FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
                     if(user == null){
-                        callbackContext.error("No user is currently signed");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "No user is currently signed"));
                         return;
                     }
                     // Sign out of Firebase
@@ -1011,9 +1031,15 @@ public class FirebasePlugin extends CordovaPlugin {
                     try{
                         GoogleSignInOptions gso = new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN).build();
                         GoogleSignInClient mGoogleSignInClient = GoogleSignIn.getClient(cordovaActivity, gso);
-                        handleTaskOutcome(mGoogleSignInClient.signOut(), callbackContext);
+                        mGoogleSignInClient.signOut()
+                                .addOnCompleteListener(cordovaActivity, new OnCompleteListener<Void>() {
+                                    @Override
+                                    public void onComplete(@NonNull Task<Void> task) {
+                                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK));
+                                    }
+                                });
                     }catch(Exception googleSignOutException){
-                        callbackContext.success();
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK));
                     }
 
                 } catch (Exception e) {
@@ -1029,7 +1055,7 @@ public class FirebasePlugin extends CordovaPlugin {
                 try {
                     FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
                     if(user == null){
-                        callbackContext.error("No user is currently signed");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "No user is currently signed"));
                         return;
                     }
                     extractAndReturnUserInfo(callbackContext);
@@ -1046,7 +1072,7 @@ public class FirebasePlugin extends CordovaPlugin {
                 try {
                     FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
                     if(user == null){
-                        callbackContext.error("No user is currently signed");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "No user is currently signed"));
                         return;
                     }
                     user.reload()
@@ -1099,7 +1125,7 @@ public class FirebasePlugin extends CordovaPlugin {
                 try {
                     FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
                     if(user == null){
-                        callbackContext.error("No user is currently signed");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "No user is currently signed"));
                         return;
                     }
 
@@ -1107,23 +1133,29 @@ public class FirebasePlugin extends CordovaPlugin {
                     UserProfileChangeRequest profileUpdates;
                     if(profile.has("name") && profile.has("photoUri")){
                         profileUpdates = new UserProfileChangeRequest.Builder()
-                                .setDisplayName(profile.getString("name"))
-                                .setPhotoUri(Uri.parse(profile.getString("photoUri")))
-                                .build();
+                            .setDisplayName(profile.getString("name"))
+                            .setPhotoUri(Uri.parse(profile.getString("photoUri")))
+                            .build();
                     }else if(profile.has("name")){
                         profileUpdates = new UserProfileChangeRequest.Builder()
-                                .setDisplayName(profile.getString("name"))
-                                .build();
+                            .setDisplayName(profile.getString("name"))
+                            .build();
                     }else if(profile.has("photoUri")){
                         profileUpdates = new UserProfileChangeRequest.Builder()
-                                .setPhotoUri(Uri.parse(profile.getString("photoUri")))
-                                .build();
+                            .setPhotoUri(Uri.parse(profile.getString("photoUri")))
+                            .build();
                     }else{
-                        callbackContext.error("'name' and/or 'photoUri' keys must be specified in the profile object");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "'name' and/or 'photoUri' keys must be specified in the profile object"));
                         return;
                     }
 
-                    handleTaskOutcome(user.updateProfile(profileUpdates), callbackContext);
+                    user.updateProfile(profileUpdates)
+                        .addOnCompleteListener(new OnCompleteListener<Void>() {
+                            @Override
+                            public void onComplete(@NonNull Task<Void> task) {
+                                FirebasePlugin.instance.handleTaskOutcome(task, callbackContext);
+                            }
+                        });
                 } catch (Exception e) {
                     handleExceptionWithContext(e, callbackContext);
                 }
@@ -1137,12 +1169,18 @@ public class FirebasePlugin extends CordovaPlugin {
                 try {
                     FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
                     if(user == null){
-                        callbackContext.error("No user is currently signed");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "No user is currently signed"));
                         return;
                     }
 
                     String email = args.getString(0);
-                    handleTaskOutcome(user.updateEmail(email), callbackContext);
+                    user.updateEmail(email)
+                        .addOnCompleteListener(new OnCompleteListener<Void>() {
+                            @Override
+                            public void onComplete(@NonNull Task<Void> task) {
+                                FirebasePlugin.instance.handleTaskOutcome(task, callbackContext);
+                            }
+                        });
                 } catch (Exception e) {
                     handleExceptionWithContext(e, callbackContext);
                 }
@@ -1156,11 +1194,17 @@ public class FirebasePlugin extends CordovaPlugin {
                 try {
                     FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
                     if(user == null){
-                        callbackContext.error("No user is currently signed");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "No user is currently signed"));
                         return;
                     }
 
-                    handleTaskOutcome(user.sendEmailVerification(), callbackContext);
+                    user.sendEmailVerification()
+                        .addOnCompleteListener(new OnCompleteListener<Void>() {
+                            @Override
+                            public void onComplete(@NonNull Task<Void> task) {
+                                FirebasePlugin.instance.handleTaskOutcome(task, callbackContext);
+                            }
+                        });
                 } catch (Exception e) {
                     handleExceptionWithContext(e, callbackContext);
                 }
@@ -1174,12 +1218,18 @@ public class FirebasePlugin extends CordovaPlugin {
                 try {
                     FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
                     if(user == null){
-                        callbackContext.error("No user is currently signed");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "No user is currently signed"));
                         return;
                     }
 
                     String password = args.getString(0);
-                    handleTaskOutcome(user.updatePassword(password), callbackContext);
+                    user.updatePassword(password)
+                            .addOnCompleteListener(new OnCompleteListener<Void>() {
+                                @Override
+                                public void onComplete(@NonNull Task<Void> task) {
+                                    FirebasePlugin.instance.handleTaskOutcome(task, callbackContext);
+                                }
+                            });
                 } catch (Exception e) {
                     handleExceptionWithContext(e, callbackContext);
                 }
@@ -1193,7 +1243,13 @@ public class FirebasePlugin extends CordovaPlugin {
                 try {
                     FirebaseAuth auth = FirebaseAuth.getInstance();
                     String email = args.getString(0);
-                    handleTaskOutcome(auth.sendPasswordResetEmail(email), callbackContext);
+                    auth.sendPasswordResetEmail(email)
+                            .addOnCompleteListener(new OnCompleteListener<Void>() {
+                                @Override
+                                public void onComplete(@NonNull Task<Void> task) {
+                                    FirebasePlugin.instance.handleTaskOutcome(task, callbackContext);
+                                }
+                            });
                 } catch (Exception e) {
                     handleExceptionWithContext(e, callbackContext);
                 }
@@ -1207,10 +1263,17 @@ public class FirebasePlugin extends CordovaPlugin {
                 try {
                     FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
                     if(user == null){
-                        callbackContext.error("No user is currently signed");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "No user is currently signed"));
                         return;
                     }
-                    handleTaskOutcome(user.delete(), callbackContext);
+
+                    user.delete()
+                            .addOnCompleteListener(new OnCompleteListener<Void>() {
+                                @Override
+                                public void onComplete(@NonNull Task<Void> task) {
+                                    FirebasePlugin.instance.handleTaskOutcome(task, callbackContext);
+                                }
+                            });
                 } catch (Exception e) {
                     handleExceptionWithContext(e, callbackContext);
                 }
@@ -1224,19 +1287,25 @@ public class FirebasePlugin extends CordovaPlugin {
                 try {
                     FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
                     if(user == null){
-                        callbackContext.error("No user is currently signed");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "No user is currently signed"));
                         return;
                     }
 
                     JSONObject jsonCredential = args.getJSONObject(0);
                     if(!FirebasePlugin.instance.isValidJsonCredential(jsonCredential)){
-                        callbackContext.error("No auth credentials specified");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "No auth credentials specified"));
                         return;
                     }
 
                     AuthCredential authCredential = FirebasePlugin.instance.obtainAuthCredential(jsonCredential);
                     if(authCredential != null){
-                        handleTaskOutcome(user.reauthenticate(authCredential), callbackContext);
+                        user.reauthenticate(authCredential)
+                                .addOnCompleteListener(new OnCompleteListener<Void>() {
+                                    @Override
+                                    public void onComplete(@NonNull Task<Void> task) {
+                                        FirebasePlugin.instance.handleTaskOutcome(task, callbackContext);
+                                    }
+                                });
                         return;
                     }
 
@@ -1250,7 +1319,7 @@ public class FirebasePlugin extends CordovaPlugin {
                     }
 
                     //ELSE
-                    callbackContext.error("Specified native auth credential id does not exist");
+                    callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "Specified native auth credential id does not exist"));
 
                 } catch (Exception e) {
                     handleExceptionWithContext(e, callbackContext);
@@ -1267,7 +1336,7 @@ public class FirebasePlugin extends CordovaPlugin {
                 try {
                     JSONObject jsonCredential = args.getJSONObject(0);
                     if(!FirebasePlugin.instance.isValidJsonCredential(jsonCredential)){
-                        callbackContext.error("No auth credentials specified");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "No auth credentials specified"));
                         return;
                     }
 
@@ -1287,7 +1356,7 @@ public class FirebasePlugin extends CordovaPlugin {
                     }
 
                     //ELSE
-                    callbackContext.error("Specified native auth credential id does not exist");
+                    callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "Specified native auth credential id does not exist"));
                 } catch (Exception e) {
                     handleExceptionWithContext(e, callbackContext);
                 }
@@ -1301,7 +1370,7 @@ public class FirebasePlugin extends CordovaPlugin {
                 try {
                     JSONObject jsonCredential = args.getJSONObject(0);
                     if(!FirebasePlugin.instance.isValidJsonCredential(jsonCredential)){
-                        callbackContext.error("No auth credentials specified");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "No auth credentials specified"));
                         return;
                     }
 
@@ -1312,7 +1381,7 @@ public class FirebasePlugin extends CordovaPlugin {
                     }
 
                     //ELSE
-                    callbackContext.error("Specified native auth credential id does not exist");
+                    callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "Specified native auth credential id does not exist"));
 
                 } catch (Exception e) {
                     handleExceptionWithContext(e, callbackContext);
@@ -1428,12 +1497,12 @@ public class FirebasePlugin extends CordovaPlugin {
                     String password = args.getString(1);
 
                     if(email == null || email.equals("")){
-                        callbackContext.error("User email address must be specified");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "User email address must be specified"));
                         return;
                     }
 
                     if(password == null || password.equals("")){
-                        callbackContext.error("User password must be specified");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "User password must be specified"));
                         return;
                     }
 
@@ -1453,12 +1522,12 @@ public class FirebasePlugin extends CordovaPlugin {
                     String password = args.getString(1);
 
                     if(email == null || email.equals("")){
-                        callbackContext.error("User email address must be specified");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "User email address must be specified"));
                         return;
                     }
 
                     if(password == null || password.equals("")){
-                        callbackContext.error("User password must be specified");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "User password must be specified"));
                         return;
                     }
 
@@ -1504,7 +1573,7 @@ public class FirebasePlugin extends CordovaPlugin {
                     }
                     Task<AuthResult> pending = FirebaseAuth.getInstance().getPendingAuthResult();
                     if (pending != null) {
-                        callbackContext.error("Auth result is already pending");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "Auth result is already pending"));
                         pending
                                 .addOnSuccessListener(new AuthResultOnSuccessListener())
                                 .addOnFailureListener(new AuthResultOnFailureListener());
@@ -1529,7 +1598,7 @@ public class FirebasePlugin extends CordovaPlugin {
                     String customToken = args.getString(0);
 
                     if(customToken == null || customToken.equals("")){
-                        callbackContext.error("Custom token must be specified");
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "Custom token must be specified"));
                         return;
                     }
 
@@ -1640,9 +1709,17 @@ public class FirebasePlugin extends CordovaPlugin {
         cordova.getThreadPool().execute(new Runnable() {
             public void run() {
                 try {
-                    mFirebaseAnalytics.setAnalyticsCollectionEnabled(enabled);
-                    setPreference(ANALYTICS_COLLECTION_ENABLED, enabled);
-                    callbackContext.success();
+                    if(getMetaDataFromManifest(ANALYTICS_COLLECTION_ENABLED)){
+                        callbackContext.error("Cannot set Analytics data collection at runtime as it's hard-coded to ENABLED at build-time in the manifest");
+                    }else if(enabled && getPreference(ANALYTICS_COLLECTION_ENABLED)){
+                        callbackContext.error("Analytics data collection is already set to enabled");
+                    }else if(!enabled && !getPreference(ANALYTICS_COLLECTION_ENABLED)){
+                        callbackContext.error("Analytics data collection is already set to disabled");
+                    }else{
+                        mFirebaseAnalytics.setAnalyticsCollectionEnabled(enabled);
+                        setPreference(ANALYTICS_COLLECTION_ENABLED, enabled);
+                        callbackContext.success();
+                    }
                 } catch (Exception e) {
                     handleExceptionWithContext(e, callbackContext);
                     e.printStackTrace();
@@ -1668,9 +1745,17 @@ public class FirebasePlugin extends CordovaPlugin {
         cordova.getThreadPool().execute(new Runnable() {
             public void run() {
                 try {
-                    FirebasePerformance.getInstance().setPerformanceCollectionEnabled(enabled);
-                    setPreference(PERFORMANCE_COLLECTION_ENABLED, enabled);
-                    callbackContext.success();
+                    if(getMetaDataFromManifest(PERFORMANCE_COLLECTION_ENABLED)){
+                        callbackContext.error("Cannot set Performance data collection at runtime as it's hard-coded to ENABLED at build-time in the manifest");
+                    }else if(enabled && getPreference(PERFORMANCE_COLLECTION_ENABLED)){
+                        callbackContext.error("Performance data collection is already set to enabled");
+                    }else if(!enabled && !getPreference(PERFORMANCE_COLLECTION_ENABLED)){
+                        callbackContext.error("Performance data collection is already set to disabled");
+                    }else{
+                        FirebasePerformance.getInstance().setPerformanceCollectionEnabled(enabled);
+                        setPreference(PERFORMANCE_COLLECTION_ENABLED, enabled);
+                        callbackContext.success();
+                    }
                 } catch (Exception e) {
                     handleExceptionWithContext(e, callbackContext);
                     e.printStackTrace();
@@ -1696,9 +1781,16 @@ public class FirebasePlugin extends CordovaPlugin {
         cordova.getThreadPool().execute(new Runnable() {
             public void run() {
                 try {
-                    firebaseCrashlytics.setCrashlyticsCollectionEnabled(enabled);
-                    setPreference(CRASHLYTICS_COLLECTION_ENABLED, enabled);
-                    callbackContext.success();
+                    if(getMetaDataFromManifest(CRASHLYTICS_COLLECTION_ENABLED)){
+                        callbackContext.error("Cannot set Crashlytics data collection at runtime as it's hard-coded to ENABLED at build-time in the manifest");
+                    }else if(enabled && getPreference(CRASHLYTICS_COLLECTION_ENABLED)){
+                        callbackContext.error("Crashlytics data collection is already set to enabled");
+                    }else if(!enabled && !getPreference(CRASHLYTICS_COLLECTION_ENABLED)){
+                        callbackContext.error("Crashlytics data collection is already set to disabled");
+                    }else{
+                        setPreference(CRASHLYTICS_COLLECTION_ENABLED, enabled);
+                        callbackContext.success();
+                    }
                 } catch (Exception e) {
                     handleExceptionWithContext(e, callbackContext);
                     e.printStackTrace();
@@ -1711,7 +1803,7 @@ public class FirebasePlugin extends CordovaPlugin {
         cordova.getThreadPool().execute(new Runnable() {
             public void run() {
                 try {
-                    callbackContext.success(isCrashlyticsEnabled() ? 1 : 0);
+                    callbackContext.success(getPreference(CRASHLYTICS_COLLECTION_ENABLED) ? 1 : 0);
                 } catch (Exception e) {
                     handleExceptionWithContext(e, callbackContext);
                     e.printStackTrace();
@@ -1720,8 +1812,17 @@ public class FirebasePlugin extends CordovaPlugin {
         });
     }
 
-    private boolean isCrashlyticsEnabled(){
-        return getPreference(CRASHLYTICS_COLLECTION_ENABLED);
+    private void isCrashlyticsCollectionCurrentlyEnabled(final CallbackContext callbackContext) {
+        cordova.getThreadPool().execute(new Runnable() {
+            public void run() {
+                try {
+                    callbackContext.success(isCrashlyticsEnabled ? 1 : 0);
+                } catch (Exception e) {
+                    handleExceptionWithContext(e, callbackContext);
+                    e.printStackTrace();
+                }
+            }
+        });
     }
 
     public void clearAllNotifications(final CallbackContext callbackContext) {
@@ -2159,7 +2260,7 @@ public class FirebasePlugin extends CordovaPlugin {
                     for(int i = 0; i < filters.length(); i++) {
                         JSONArray filter = filters.getJSONArray(i);
                         switch(filter.getString(0)) {
-                            case "where":
+                            case "where": 
                                 if (Objects.equals(filter.getString(2), new String("=="))) {
                                     query = query.whereEqualTo(filter.getString(1), filter.getString(3));
                                 }
@@ -2179,7 +2280,7 @@ public class FirebasePlugin extends CordovaPlugin {
                                     query = query.whereArrayContains(filter.getString(1), filter.getString(3));
                                 }
                                 break;
-                            case "orderBy":
+                            case "orderBy": 
                                 Direction direction = Direction.ASCENDING;
                                 if (Objects.equals(filter.getString(2), new String("desc"))) {
                                     direction = Direction.DESCENDING;
@@ -2197,7 +2298,7 @@ public class FirebasePlugin extends CordovaPlugin {
                                 break;
                         }
                     }
-
+                    
                     query.get()
                             .addOnCompleteListener(new OnCompleteListener<QuerySnapshot>() {
                                 @Override
@@ -2298,11 +2399,9 @@ public class FirebasePlugin extends CordovaPlugin {
     private void handleTaskOutcome(@NonNull Task<Void> task, CallbackContext callbackContext) {
         try {
             if (task.isSuccessful()) {
-                callbackContext.success();
-            }else if(task.getException() != null){
-                callbackContext.error(task.getException().getMessage());
+                callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK));
             }else{
-                callbackContext.error("Task failed for unknown reason");
+                callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, task.getException().getMessage()));
             }
         } catch (Exception e) {
             handleExceptionWithContext(e, callbackContext);
@@ -2312,13 +2411,13 @@ public class FirebasePlugin extends CordovaPlugin {
     private void handleAuthTaskOutcome(@NonNull Task<AuthResult> task, CallbackContext callbackContext) {
         try {
             if (task.isSuccessful()) {
-                callbackContext.success();
+                callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK));
             }else{
                 String errMessage = task.getException().getMessage();
                 if (task.getException() instanceof FirebaseAuthInvalidCredentialsException) {
                     errMessage = "Invalid verification code";
                 }
-                callbackContext.error(errMessage);
+                callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, errMessage));
             }
         } catch (Exception e) {
             handleExceptionWithContext(e, callbackContext);
@@ -2352,7 +2451,7 @@ public class FirebasePlugin extends CordovaPlugin {
         public void onSuccess(AuthResult authResult) {
             Log.d(TAG, "AuthResult:onSuccess:" + authResult);
             if(FirebasePlugin.instance.authResultCallbackContext != null){
-                FirebasePlugin.instance.authResultCallbackContext.success();
+                FirebasePlugin.instance.authResultCallbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK));
             }
         }
     }
@@ -2396,7 +2495,7 @@ public class FirebasePlugin extends CordovaPlugin {
         }
     }
 
-    private Map<String, Object> jsonStringToMap(String jsonString)  throws JSONException {
+	private Map<String, Object> jsonStringToMap(String jsonString)  throws JSONException {
         Type type = new TypeToken<Map<String, Object>>(){}.getType();
         return gson.fromJson(jsonString, type);
     }
@@ -2408,9 +2507,9 @@ public class FirebasePlugin extends CordovaPlugin {
     }
 
     private void logMessageToCrashlytics(String message){
-        if(isCrashlyticsEnabled()){
+        if(isCrashlyticsEnabled){
             try{
-                firebaseCrashlytics.log(message);
+                Crashlytics.log(message);
             }catch (Exception e){
                 Log.e(TAG, e.getMessage());
             }
@@ -2420,9 +2519,9 @@ public class FirebasePlugin extends CordovaPlugin {
     }
 
     private void logExceptionToCrashlytics(Exception exception){
-        if(isCrashlyticsEnabled()){
+        if(isCrashlyticsEnabled){
             try{
-                firebaseCrashlytics.recordException(exception);
+                Crashlytics.logException(exception);
             }catch (Exception e){
                 Log.e(TAG, e.getMessage());
             }
